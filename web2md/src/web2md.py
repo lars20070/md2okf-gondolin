@@ -31,7 +31,7 @@ BOOK_PATH = _SOURCE.path.rstrip("/") or "/"             # /style
 BOOK_SLUG = BOOK_PATH.strip("/").rsplit("/", 1)[-1] or "index"  # style
 
 LOCALE = {"hl": "en"}
-UA = "md2okf-web2md/0.1 (+https://github.com/lars20070/md2okf)"
+UA = "md2okf-gondolin-web2md/0.1 (+https://github.com/lars20070/md2okf-gondolin)"
 NAV = ".devsite-book-nav-wrapper"
 BODY = "div.devsite-article-body"
 DROP = (

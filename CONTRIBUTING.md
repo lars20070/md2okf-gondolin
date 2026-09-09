@@ -1,4 +1,4 @@
-# Contributing to md2okf
+# Contributing to md2okf-gondolin
 
 This guide covers working *on* the repository: the task runner, the test
 suites, the sandbox kit, and how the agent's own configuration is laid out. If

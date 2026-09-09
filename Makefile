@@ -1,4 +1,4 @@
-# md2okf — developer task runner.
+# md2okf-gondolin — developer task runner.
 #
 # Pi runs in one runtime: the Docker Sandbox (sbx) kit under pi/, which owns the
 # only copy of the agent config (see AGENTS.md).

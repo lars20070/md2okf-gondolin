@@ -12,8 +12,8 @@
 
 ## Repository map
 
-md2okf compiles Markdown into an OKF wiki with the Pi coding agent: one source
-document per file in `md/`, one Pi run per file, folded into the wiki under
+md2okf-gondolin compiles Markdown into an OKF wiki with the Pi coding agent: one
+source document per file in `md/`, one Pi run per file, folded into the wiki under
 `okf/`. `md/` is tracked; `okf/` is gitignored except for `okf/.okflintrc.json`,
 which is tracked.
 

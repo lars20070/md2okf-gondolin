@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Rename the project to `md2okf-gondolin`, following the repository move to
+  `lars20070/md2okf-gondolin`. GitHub badge and issue-tracker URLs, the
+  `web2md` User-Agent and all prose now use the new name. The sbx sandbox
+  kit keeps its shorter name `md2okf` (`pi/spec.yaml`), so existing
+  `sbx secret` bindings continue to work.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added

@@ -1,7 +1,7 @@
-# md2okf
+# md2okf-gondolin
 
-[![CI](https://github.com/lars20070/md2okf/actions/workflows/ci.yml/badge.svg)](https://github.com/lars20070/md2okf/actions/workflows/ci.yml)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lars20070/md2okf)
+[![CI](https://github.com/lars20070/md2okf-gondolin/actions/workflows/ci.yml/badge.svg)](https://github.com/lars20070/md2okf-gondolin/actions/workflows/ci.yml)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lars20070/md2okf-gondolin)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Compile Markdown documents into an OKF knowledge base with a coding agent.
@@ -89,7 +89,7 @@ flowchart LR
 - macOS with [Homebrew](https://brew.sh), or
   Linux with [KVM](https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine). Docker Desktop is not
   required.
-- [sbx](https://github.com/docker/sbx-releases) 0.42.0 is required. sbx is experimental. A later version may break `md2okf`.
+- [sbx](https://github.com/docker/sbx-releases) 0.42.0 is required. sbx is experimental. A later version may break `md2okf-gondolin`.
 - An [OpenRouter](https://openrouter.ai) API key, which pays for the model the
   agent runs on.
 - `make`, `git`, and `jq`, which the compile driver uses on the host.
@@ -221,7 +221,8 @@ sbx secret set-custom --sandbox md2okf \
   --value "$OPENROUTER_API_KEY"
 ```
 
-`md2okf` is the kit's name, which comes from `pi/spec.yaml`. `make wiki` reads
+`md2okf` is the sandbox kit's name, which comes from `pi/spec.yaml`. It is
+deliberately shorter than the repository name — use it verbatim. `make wiki` reads
 the key from `sbx secret`, never from your shell environment. To point the agent
 at a different provider, see [the pi kit guide](pi/README.md).
 
@@ -249,7 +250,7 @@ your PATH.
 ## Getting help
 
 Questions, bugs and feature requests belong in [the issue
-tracker](https://github.com/lars20070/md2okf/issues).
+tracker](https://github.com/lars20070/md2okf-gondolin/issues).
 
 ## License
 
