@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-09
+
 ### Changed
 
 - Rename the project to `md2okf-gondolin`, following the repository move to
