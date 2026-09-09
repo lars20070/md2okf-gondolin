@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Agents
+.claude/settings.local.json
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# web2md HTML fetch cache
+web2md/cache/
+
+# md input folder
+# md/*
+
+# okf output folder
+okf/*
+!okf/
+!okf/.okflintrc.json
+
+# Pi session transcripts from make wiki
+logs/

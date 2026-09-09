@@ -1,0 +1,8 @@
+config:
+  MD013: false  # line-length: disable line length checks
+  MD026: false  # Trailing punctuation in heading: disable trailing punctuation checks
+  MD024:        # no-duplicate-heading: CHANGELOG.md repeats `### Added`/`### Changed`
+    siblings_only: true  # under every version, which Keep a Changelog requires
+
+ignores:
+  - "SPEC.md"
