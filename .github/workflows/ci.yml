@@ -89,9 +89,9 @@ jobs:
       - name: Test (pytest)
         run: make test-clis
 
-  # Validate pi/spec.yaml against the current Sandbox Kit schema. Static check —
-  # no Docker or login; only the CLI download needs the network.
-  validate-kit:
+  # Type-check the Gondolin host runtime and run its pure unit tests. VM tests
+  # stay host-only because GitHub's Linux runners do not provide macOS HVF.
+  validate-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -102,21 +102,15 @@ jobs:
           # .git/config where a later third-party step could read it.
           persist-credentials: false
 
-      # Install the latest sbx CLI. "latest" is intentional: the schema is
-      # bundled in the binary, so this surfaces schema drift as soon as it ships.
-      # Install steps mirror docker/sbx-kits-contrib .github/workflows/tck.yml.
-      - name: Install sbx CLI
-        run: |
-          set -euo pipefail
-          curl -fsSL \
-            "https://github.com/docker/sbx-releases/releases/latest/download/DockerSandboxes-linux.tar.gz" \
-            -o /tmp/DockerSandboxes-linux.tar.gz
-          tar xzf /tmp/DockerSandboxes-linux.tar.gz -C /tmp
-          sudo PREFIX="${HOME}/.docker/sbx" /tmp/docker-sbx/install.sh
-          echo "${HOME}/.docker/sbx/bin" >> "$GITHUB_PATH"
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
 
-      - name: Verify sbx
-        run: sbx version
+      - name: Install runtime dependencies
+        run: make install-runtime
 
-      - name: Validate Pi kit spec
+      - name: Validate Gondolin runtime
         run: make validate

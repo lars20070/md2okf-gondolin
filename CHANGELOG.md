@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-09
+
+### Changed
+
+- Replace the Docker `sbx` kit with a Gondolin 0.12.0 runtime on macOS. The new
+  TypeScript driver provisions a reusable guest checkpoint, resumes one fresh
+  micro-VM per source document, and preserves the Ralph-loop compile behavior.
+- Move Pi's agent configuration from `pi/files/home/.pi/agent/` to
+  `runtime/agent/`; update the Makefile, shell entry points, CI, and
+  documentation for the new runtime.
+
+### Security
+
+- Expose only `SPEC.md`, read-only `md/`, writable `okf/`, read-only agent
+  config, and session storage to the guest. A VFS guard protects the tracked
+  linter config and records mutations in per-run audit logs.
+- Restrict runtime egress to OpenRouter, npm, and Context7, disable WebSockets,
+  and substitute the OpenRouter key only into requests to `openrouter.ai`.
+
 ## [0.1.1] - 2026-09-09
 
 ### Changed

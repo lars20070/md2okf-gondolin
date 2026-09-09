@@ -1,7 +1,7 @@
 # Contributing to md2okf-gondolin
 
 This guide covers working *on* the repository: the task runner, the test
-suites, the sandbox kit, and how the agent's own configuration is laid out. If
+suites, the Gondolin runtime, and how the agent's own configuration is laid out. If
 you only want to compile a wiki, [the README](README.md) is enough.
 
 `AGENTS.md` holds the same ground rules for coding agents working on this repo.
@@ -11,11 +11,14 @@ you only want to compile a wiki, [the README](README.md) is enough.
 ```bash
 make lint                # markdownlint, jq, yamllint, shellcheck, cspell, ruff;
                          # also VERSION ↔ CHANGELOG.md agreement
-make validate            # check pi/spec.yaml against the Sandbox Kit schema
+make validate            # TypeScript check and pure runtime unit tests
 make test-web2md         # pytest, the web2md scraper suite
 make test-clis           # pytest, the four host CLI suites
 make install-clis        # install the four host CLIs onto PATH
-make test-sandbox        # check the sandbox has the tools, config and key it promises
+make install-runtime     # install pinned Gondolin host dependencies
+make runtime-image       # build or verify the provisioned guest checkpoint
+make test-sandbox        # check the checkpoint's toolchain
+make test-bypass         # run the adversarial VFS boundary matrix
 make lint-okf            # lint the generated wiki
 make scrape              # fetch the website into md/ as one file
 make wiki                # compile the OKF wiki
@@ -26,41 +29,33 @@ markdownlint needs `brew install markdownlint-cli2`; yamllint and ruff run via
 `make lint-okf` needs `pnpm`.
 
 CI (`.github/workflows/ci.yml`) runs four jobs on every pull request: `lint`,
-`test-web2md`, `test-clis`, and `validate-kit`. Each one reuses the matching
+`test-web2md`, `test-clis`, and `validate-runtime`. Each one reuses the matching
 `make` target, so a green `make lint && make validate && make test-web2md &&
 make test-clis` locally means a green build.
 
-## Validate the kit spec before you finish
+## Validate runtime changes before you finish
 
-Touch anything under `pi/` or `scripts/*.sh` and run `make validate` before you
-call the job done. It checks the kit spec against the schema bundled in your
-`sbx` binary, and needs no Docker, no login and no network. CI runs the same
-check in its `validate-kit` job, so catching a break locally saves a red build.
-The current kit requires sbx 0.42.0 or newer; `brew upgrade sbx` fixes unknown
-field errors from an older install.
+Touch anything under `runtime/` or `scripts/*.sh` and run `make validate`
+before you call the job done. It type-checks the runtime and runs the VFS guard
+and network-policy unit tests without starting a VM. CI runs the same check.
 
-`make test-sandbox` asks the other question: does the sandbox actually have
-every tool `pi/spec.yaml` installs, the agent config copied in from `pi/files/`,
-and a proxy-managed key? It needs an `sbx login` session. Like the scripts
-below it reuses the sandbox — fast, and nothing a compile left behind is lost —
-and only builds one if none exists. That also means it tests the sandbox you
-have, which may be older than your last `pi/` edit. To check the current kit
-from scratch, throw the sandbox away first with `sbx rm --force md2okf`;
-building the next one takes minutes.
+VM checks require macOS HVF. Run `make runtime-image && make test-sandbox` after
+changing provisioning or `runtime/agent/`; add `make test-bypass` after changing
+VFS mounts or guards. The checkpoint under `runtime/.cache/` is generated and
+gitignored.
 
 ## Working inside the sandbox
 
 ```bash
-./scripts/bash.sh                       # interactive shell in the existing sandbox
-./scripts/pi.sh                         # interactive Pi in the same sandbox
-./scripts/compile-okf.sh md/other-docs  # compile a different source folder
+make shell                                    # interactive shell in a fresh VM
+make agent                                    # interactive Pi in a fresh VM
+node runtime/src/compile-okf.ts md/other-docs # compile another source folder
 ```
 
-Once a sandbox exists, this should print `proxy-managed` rather than your key:
-
-```bash
-sbx exec md2okf -- sh -lc 'echo "$OPENROUTER_API_KEY"'
-```
+The shell exposes only the sparse workspace assembled in
+`runtime/src/workspace.ts`. Pi sessions require `OPENROUTER_API_KEY` on the
+host; the guest receives a placeholder that is substituted only in requests to
+OpenRouter.
 
 ## Python layout
 
@@ -99,7 +94,7 @@ strips frontmatter: `merkleokf` answers "did this change", `sizeokf` answers
 
 ## How the agent knows what to do
 
-The instructions come in two parts. `pi/files/home/.pi/agent/AGENTS.md` holds
+The instructions come in two parts. `runtime/agent/AGENTS.md` holds
 what every task must respect: the OKF conventions, the directories the agent may
 write to, and the rule that `SPEC.md` outranks both. Each task's procedure lives
 in a skill of its own. Task skill today: `compile-okf`. Tool skills:
@@ -112,14 +107,12 @@ A skill is a directory holding a `SKILL.md` — YAML frontmatter with a `name` a
 `description`, then the instructions, plus any scripts it needs. Pi picks skills
 up from `~/.pi/agent/skills/`.
 
-The kit is `pi/`, and the config it carries lives in `pi/files/home/.pi/agent/`.
-That config is copied into the sandbox when the kit is built, not mounted, so an
-edit reaches Pi on the next fresh sandbox — which `make wiki` always builds.
-[The pi kit guide](pi/README.md) covers the model and provider settings.
+The config is mounted read-only at `/config` and copied into Pi's ephemeral
+home on each VM boot. Model and provider settings live in
+`runtime/agent/settings.json` and `runtime/agent/models.json`.
 
-`tests/` holds shell tests for that sandbox, in pairs: a host-side script
-(`test-sandbox.sh`, which owns the sandbox and calls `sbx`) and the POSIX `sh`
-script it runs inside the VM (`test-sandbox-guest.sh`).
+`runtime/test/` holds pure unit tests, a provisioned-toolchain check, and the
+adversarial filesystem bypass matrix.
 
 ## Linting the wiki
 

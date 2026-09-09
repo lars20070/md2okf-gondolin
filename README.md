@@ -26,11 +26,11 @@ flowchart LR
     direction TB
     SPEC@{ shape: doc, label: "SPEC.md<br/>OKF spec"}
     MD@{ shape: docs, label: "md/*.md<br/>source documents"}
-    DRV["make wiki<br/>scripts/compile-okf.sh"]
-    KIT["pi/spec.yaml<br/>pi/files/"]
+    DRV["make wiki<br/>TypeScript driver"]
+    KIT["runtime/<br/>TypeScript + agent config"]
   end
 
-  subgraph VM["sbx microVM"]
+  subgraph VM["Gondolin micro-VM"]
     PI["Pi agent with<br/>/compile-okf skill"]
     TOOLS["inspectmd<br/>inspectokf<br/>sizeokf<br/>merkleokf"]
     LINT["okf-lint"]
@@ -46,12 +46,12 @@ flowchart LR
 
   SPEC -.->|"outranks all"| PI
   MD ==>|"read by"| PI
-  DRV -->|"sbx exec"| PI
+  DRV -->|"checkpoint resume"| PI
   KIT -->|"builds"| VM
   PI -.->|"run"| TOOLS & LINT
   LINT -.->|"must pass"| OKF
   PI ==>|"writes"| OKF
-  PI -->|"via sbx proxy"| NET
+  PI -->|"host-mediated HTTPS"| NET
   NET -->|"BYOK"| NET1 & NET2
 
   classDef data    fill:aliceblue,stroke:steelblue,stroke-width:2px,color:#10314F
@@ -78,7 +78,7 @@ flowchart LR
 - [How it works](#how-it-works)
 - [What lands in okf/](#what-lands-in-okf)
 - [Getting Markdown in](#getting-markdown-in)
-- [Set up the OpenRouter key](#set-up-the-openrouter-key)
+- [Set the OpenRouter key](#set-the-openrouter-key)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Getting help](#getting-help)
@@ -86,39 +86,21 @@ flowchart LR
 
 ## Requirements
 
-- macOS with [Homebrew](https://brew.sh), or
-  Linux with [KVM](https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine). Docker Desktop is not
-  required.
-- [sbx](https://github.com/docker/sbx-releases) 0.42.0 is required. sbx is experimental. A later version may break `md2okf-gondolin`.
+- macOS with [Homebrew](https://brew.sh). VM commands currently require
+  Apple's Hypervisor Framework (HVF); Linux is not supported by the task
+  runner.
+- Node.js 23.6 or newer and QEMU. Docker Desktop is not required.
 - An [OpenRouter](https://openrouter.ai) API key, which pays for the model the
   agent runs on.
-- `make`, `git`, and `jq`, which the compile driver uses on the host.
+- `make`, `git`, and `uv`.
 
 ## Quickstart
 
-Install the sandbox CLI and sign in.
-
-[macOS:](https://docs.docker.com/ai/sandboxes/install/#install-on-macos)
-
 ```bash
-brew trust docker/tap
-brew install docker/tap/sbx
-sbx login
-```
-
-[Linux:](https://docs.docker.com/ai/sandboxes/install/#linux)
-
-```bash
-curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh
-sudo apt-get install docker-sbx
-sudo usermod -aG kvm "$USER" && newgrp kvm
-sbx login
-```
-
-Hand sbx your OpenRouter key once — see [Set up the OpenRouter
-key](#set-up-the-openrouter-key). Then put your Markdown in `md/` and compile:
-
-```bash
+brew install node qemu uv
+make install-runtime install-clis
+make runtime-image
+export OPENROUTER_API_KEY=sk-or-...
 cp my-document.md md/
 make wiki
 ```
@@ -139,14 +121,13 @@ sample documents, so `make wiki` has something to compile straight away.
 
 ## How it works
 
-A shell driver on the host runs the agent inside a microVM, repeatedly, until a
-hash of the output stops moving. The host drives; everything else happens inside
-the sandbox.
+A TypeScript driver on the host resumes a provisioned Gondolin checkpoint and
+runs the agent inside a fresh micro-VM, repeatedly, until a hash of the output
+stops moving. The host drives; everything else happens inside the sandbox.
 
-`make wiki` throws the old sandbox away and builds a fresh one, so the current
-kit — the `pi/` directory that declares the sandbox image, its network
-allowlist and the agent's config — always applies. It then runs the agent once
-per `md/*.md` file, re-running the same document (a *Ralph loop*) until
+`make wiki` starts one VM per `md/*.md` file and mounts a deliberately sparse
+workspace: `SPEC.md` plus read-only `md/`, writable `okf/`, the read-only Pi
+config, and session storage. It re-runs the same document (a *Ralph loop*) until
 `merkleokf --nolog -L 0` reports an unchanged wiki root hash. `merkleokf` prints
 a Merkle hash tree, one hash per file and per directory, so a change to any page
 moves the root hash and an unchanged root means the run added nothing. The loop
@@ -154,7 +135,9 @@ is capped by `RALPH_MAX` (default 10). The agent's only writable output is
 `okf/`, [okf-lint](https://github.com/thisismydesign/okf-lint) must pass before
 it finishes, and `SPEC.md` outranks every instruction file. Each run streams
 tool names and assistant text as it goes, and writes a session transcript under
-`logs/sessions/`.
+`logs/sessions/`. Gondolin mediates filesystem and HTTP access on the host:
+writes to the tracked `okf/.okflintrc.json` are denied, runtime egress is
+allowlisted, and the API key is substituted only into OpenRouter requests.
 
 ### Repository layout
 
@@ -163,8 +146,8 @@ tool names and assistant text as it goes, and writes a session transcript under
 | `md/` | source documents, one agent run each |
 | `okf/` | the generated wiki |
 | `Makefile` | every task worth running; `make wiki` compiles |
-| `scripts/` | what the Makefile or the agent call — compile, sandbox shell, sbx kit validation, and the four helper CLIs (`inspectmd`, `inspectokf`, `sizeokf`, `merkleokf`) |
-| `pi/` | what the scripts run: the Docker Sandbox kit and the config it carries |
+| `scripts/` | shell entry points and the four helper CLIs (`inspectmd`, `inspectokf`, `sizeokf`, `merkleokf`) |
+| `runtime/` | Gondolin drivers, checkpoint provisioner, Pi config, and tests |
 | `SPEC.md` | the [OKF specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) the wiki is built against |
 | `AGENTS.md` | instructions for coding agents working *on this repo*, not for Pi |
 | `pdf2md/` | optional: converts a PDF into `md` |
@@ -203,36 +186,26 @@ Markdown document into `md/`. No model is involved, so the result is
 deterministic, and the fetched HTML is cached — see
 [the web2md guide](web2md/README.md).
 
-## Set up the OpenRouter key
+## Set the OpenRouter key
 
-`sbx` keeps the key out of the virtual machine. It holds the real string on the
-host and swaps it into requests at its proxy, so inside the sandbox
-`$OPENROUTER_API_KEY` reads `proxy-managed`. Set it twice:
+Export the key in the host shell that runs `make wiki` or `make agent`:
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
-echo "$OPENROUTER_API_KEY" | sbx secret set openrouter
-
-# And again as a custom secret, to work around a known sbx issue:
-# https://github.com/docker/sbx-releases/issues/25
-sbx secret set-custom --sandbox md2okf \
-  --host openrouter.ai \
-  --env OPENROUTER_API_KEY \
-  --value "$OPENROUTER_API_KEY"
 ```
 
-`md2okf` is the sandbox kit's name, which comes from `pi/spec.yaml`. It is
-deliberately shorter than the repository name — use it verbatim. `make wiki` reads
-the key from `sbx secret`, never from your shell environment. To point the agent
-at a different provider, see [the pi kit guide](pi/README.md).
+Guest code sees only a generated placeholder. Gondolin's host-side HTTP hook
+replaces that placeholder with the real key for `openrouter.ai` and nowhere
+else. The runtime does not write the key to the checkpoint or guest filesystem.
 
 ## Troubleshooting
 
-**`sbx` reports unknown fields from `pi/spec.yaml`.** Your sbx is older than
-0.42.0 and does not know the kit-spec v2 grammar. Run `brew upgrade sbx`.
+**`qemu-img` is missing.** Install QEMU with `brew install qemu`.
 
-**A runtime command fails to authenticate.** `make wiki`, `make test-sandbox`,
-`./scripts/bash.sh` and `./scripts/pi.sh` need an active `sbx login` session.
+**The checkpoint is missing.** Run `make runtime-image` on the Mac.
+
+**The OpenRouter key is missing.** Export `OPENROUTER_API_KEY` in the current
+shell before `make wiki` or `make agent`.
 
 **`Error: Ralph loop hit 10 iterations`.** The wiki root hash kept changing.
 Raise the cap for one run with `RALPH_MAX=20 make wiki`, or read
@@ -242,10 +215,10 @@ Raise the cap for one run with `RALPH_MAX=20 make wiki`, or read
 
 Lint, tests, the sandbox checks, the helper CLIs and the per-subproject layout
 are covered in [the contributing guide](CONTRIBUTING.md). The short version:
-`make lint` checks the source tree, `make validate` checks the sandbox kit spec,
-and CI runs both on every pull request. There is no package to install —
-`make wiki` is the entry point, and `make install-clis` puts the helper CLIs on
-your PATH.
+`make lint` checks the source tree, `make validate` checks the TypeScript
+runtime and its pure unit tests, and CI runs both on every pull request.
+`make install-runtime` installs the pinned host dependencies, and
+`make install-clis` puts the helper CLIs on your PATH.
 
 ## Getting help
 
