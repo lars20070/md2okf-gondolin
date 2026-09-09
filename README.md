@@ -146,7 +146,7 @@ allowlisted, and the API key is substituted only into OpenRouter requests.
 | `md/` | source documents, one agent run each |
 | `okf/` | the generated wiki |
 | `Makefile` | every task worth running; `make wiki` compiles |
-| `scripts/` | shell entry points and the four helper CLIs (`inspectmd`, `inspectokf`, `sizeokf`, `merkleokf`) |
+| `scripts/` | release helpers and the four agent CLIs (`inspectmd`, `inspectokf`, `sizeokf`, `merkleokf`) |
 | `runtime/` | Gondolin drivers, checkpoint provisioner, Pi config, and tests |
 | `SPEC.md` | the [OKF specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) the wiki is built against |
 | `AGENTS.md` | instructions for coding agents working *on this repo*, not for Pi |
