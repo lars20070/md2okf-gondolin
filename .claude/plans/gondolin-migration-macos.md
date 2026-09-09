@@ -6,6 +6,20 @@
 > revision 2's design intact — five built-in mounts, one guard hook, zero custom
 > providers — and rewrites the *execution* around that split. Every stage now
 > says who runs it, and every host stage ships a copy-pasteable command block.
+>
+> **Revision 3.1** is a correctness pass over revision 3's source citations, not
+> a redesign. No stage was added, removed or reordered. One claim was wrong —
+> `gondolin build` *can* run on macOS — one hazard was missing (`allowedHosts`
+> fails open), and three citations had drifted. Details inline below, each
+> re-checked against the clone at HEAD `29fa74d`.
+>
+> **Revision 3.2** answers the three blockers raised in
+> `gondolin-migration-macos-review.md`: the guest-Pi decision moves to before
+> Stage 3, Stage 3 gains an explicit toolchain cut list, and `make validate`
+> becomes a dispatcher so CI does not go red on the open PR. Also from that
+> review: `SPEC.md` seeding, the row-10 mechanism, and `pi.dev`. Note the review
+> was written against revision 3 and so endorses the `gondolin build` chroot
+> claim that 3.1 had already disproved — that endorsement is not acted on.
 
 ## Context
 
@@ -107,18 +121,46 @@ sees the real path.
   `createErrnoError` is **not** exported; reimplement in ~15 lines setting
   `error.code` (translation is by code first, `linux-errno.ts`).
 - **Pin the image tag, never `latest`.** Checkpoints bind to a `buildId`
-  (`checkpoint.ts:303-312`). Use `GONDOLIN_DEFAULT_IMAGE=alpine-base:0.2.0`.
+  (`host/src/checkpoint.ts:303-310`), and `builtin-image-registry.json` maps
+  `alpine-base:latest` and `alpine-base:0.2.0` to the *same* aarch64 build
+  (`108a1836-…`) today — so the difference is invisible until `latest` moves.
+  Pin in code: `VM.create({ sandbox: { imagePath: "alpine-base:0.2.0" } })`.
+  `imagePath` accepts an image ref, not just an asset directory
+  (`docs/cli.md:483`), so this does not depend on remembering to export
+  `GONDOLIN_DEFAULT_IMAGE`.
+- **The stock image is richer than `pi/spec.yaml` assumes.**
+  `images/alpine-base.json` installs `bash`, `ca-certificates`, `curl`,
+  `e2fsprogs`, `nodejs`, `npm`, `uv`, `python3` and `openssh`. Stage 3 therefore
+  installs no language runtimes — only `tree`, Pi, `okf-lint`, the four CLIs and
+  the Context7 extension.
+- **`allowedHosts` fails *open*, and that is the one footgun in this design.**
+  `createHttpHooks` treats an omitted `allowedHosts` as `["*"]`; only an explicit
+  `[]` is deny-all (`host/src/http/hooks.ts:52`, `:161-164`). So "Gondolin is
+  deny-by-default" is true of the filesystem and **false of the network**. In
+  `runtime/src/net.ts` the list must be an explicit non-empty literal, never a
+  variable that could arrive `undefined`.
 - **The `uv` trap.** `/init` exports `XDG_DATA_HOME=/tmp/.local/share` and
-  `UV_CACHE_DIR=/tmp/.cache/uv` (`guest/image/init:53-56`), both tmpfs, so
+  `UV_CACHE_DIR=/tmp/.cache/uv` (`guest/image/init:55-56`), both tmpfs, so
   `uv tool install` must set `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` under `/usr/local`
   or the CLIs vanish on resume.
 - **Do not use `autoStart: false`.** Documented, but broken in 0.12.0:
-  `ensureRunning()` throws `sandbox is stopped` (`vm/core.js:1231`), so an
+  `ensureRunning()` throws `sandbox is stopped` when
+  `state === "stopped" && !this.autoStart` (`host/src/vm/core.ts:1595`), so an
   explicit `start()` can never boot. Harmless — everything is configured through
   `VM.create` options — but never reach for it.
-- **`gondolin build` with `postBuild.commands` cannot run on macOS** (it
-  chroots; `alpine/packages.ts:170`, `build/index.ts:84`). Hence
-  provision-then-checkpoint rather than a built image.
+- **Correction (revision 3.1): `gondolin build` *can* run on macOS.** Revision 3
+  claimed it could not, because `postBuild.commands` chroots. Re-checked, that is
+  wrong: `shouldUseContainer()` returns true for
+  `hasPostBuildCommands && process.platform !== "linux"`
+  (`host/src/build/index.ts:39-41`), so a macOS build automatically runs in a
+  **container**, and the chroot in `host/src/alpine/packages.ts:160-173` only
+  executes inside that Linux container as root. The docs say the same
+  (`docs/custom-images.md:283`).
+  We still choose **provision-then-checkpoint**, but on honest grounds: it needs
+  no container runtime on the Mac and no second build system (a build config
+  JSON, an image ref, a `--tag`), and the checkpoint machinery has to exist
+  anyway for per-document resume. `gondolin build` stays available as the
+  fallback if provisioning ever grows past what a boot-and-install can do.
 - `/etc/gondolin` is auto-injected (the MITM CA), so the "exactly three entries"
   assertion applies to `/workspace`, not `/`.
 - **Known cosmetic wart:** `access(W_OK)` is answered from `provider.readonly`
@@ -155,6 +197,9 @@ merkleokf --version 2>&1 | tee -a logs/gondolin/stage0-env.log
 - [ ] `node --version` ≥ 23.6.0 (Gondolin's `engines`). Brew's `node` is 24.x.
 - [ ] `qemu-system-aarch64 --version` reports a version.
 - [ ] `uv --version` and `merkleokf --version` both succeed.
+- [ ] `echo "IS_SANDBOX=[$IS_SANDBOX]"` prints empty on the Mac. It is `1` inside
+      the agent's sandbox, and the Stage 1 `require-host` guard depends on that
+      difference.
 - [ ] The agent can read `logs/gondolin/stage0-env.log` — this is the handshake.
       If it cannot, the shared-mount assumption is wrong and the whole handoff
       falls back to pasting output into the chat.
@@ -164,11 +209,16 @@ merkleokf --version 2>&1 | tee -a logs/gondolin/stage0-env.log
 First VM boot. Merged with revision 2's Stage 1 because the smoke test needs the
 package installed, and only the host can install it.
 
-**Agent writes:** `runtime/package.json`
-(`@earendil-works/gondolin@0.12.0` pinned exactly, `"type": "module"`,
-`"private": true`), `runtime/tsconfig.json`, `runtime/scripts/smoke.ts` (boot
-`alpine-base:0.2.0`, run `uname -a`, `id -u`, `ls /data`, close), and the
-`.gitignore` entries `runtime/node_modules/`, `runtime/.cache/`.
+**Agent writes:** `runtime/package.json`, `runtime/tsconfig.json`,
+`runtime/scripts/smoke.ts` (boot `alpine-base:0.2.0`, run `uname -a`, `id -u`,
+`ls /data`, close), and the `.gitignore` entries `runtime/node_modules/`,
+`runtime/.cache/`.
+
+Pins, checked against the registry rather than guessed:
+`@earendil-works/gondolin` at `0.12.0` **exact** (current `latest`, `engines:
+>=23.6.0`); `typescript` at `^5.9.0`, because plain `latest` is now **7.0.2**,
+the Go port, which is not a thing to adopt mid-migration; `@types/node` at
+`^26.0.0`. Plus `"type": "module"` and `"private": true`.
 
 Also a Makefile guard, so a VM target run in the wrong place fails legibly
 instead of dying inside QEMU:
@@ -188,8 +238,7 @@ require-host:
 ```bash
 cd ~/Code/md2okf-gondolin
 npm --prefix runtime install 2>&1 | tee logs/gondolin/stage1-install.log
-GONDOLIN_DEFAULT_IMAGE=alpine-base:0.2.0 \
-  node runtime/scripts/smoke.ts 2>&1 | tee logs/gondolin/stage1-smoke.log
+node runtime/scripts/smoke.ts 2>&1 | tee logs/gondolin/stage1-smoke.log
 ```
 
 **Checks**
@@ -218,9 +267,17 @@ enforcement layer.
   only, via `import type`. This is what lets the agent run the tests at all,
   and it keeps the guard trivially unit-testable.
 - `runtime/test/guard.test.ts` — `node --test` over the pure function.
-- Makefile: `make validate` becomes `tsc --noEmit` + these tests, keeping its
-  `AGENTS.md` contract (static, no VM, no network, run before finishing). It
-  drops `scripts/validate-spec.sh` and needs no `require-host`.
+- Makefile: `make validate` **gains** `tsc --noEmit` + these tests while still
+  running `scripts/validate-spec.sh`, keeping its `AGENTS.md` contract (static,
+  no VM, no network, run before finishing) and needing no `require-host`.
+  It becomes a dispatcher, not a replacement, until Stage 5 deletes `pi/` and
+  drops the spec check with it.
+
+  This ordering is deliberate. `.github/workflows/ci.yml` triggers on an
+  unqualified `pull_request:`, so its `validate-kit` job runs `make validate` on
+  **every push to the PR**, not only after merge. Swapping the target's meaning
+  here would turn the branch red from Stage 2 onward for the whole migration.
+  Keeping both checks costs one line and keeps CI genuinely out of scope.
 
 **Agent checks** (inner loop, against the host-installed tree, `--experimental-strip-types` because the sandbox ships Node 22):
 
@@ -249,15 +306,41 @@ make validate 2>&1 | tee logs/gondolin/stage2-validate.log
 
 ## Stage 3 — Provisioning and the checkpoint · **AGENT** writes, **HOST** runs
 
-`gondolin build` cannot run on macOS, so the image is made by booting stock
-Alpine, installing the toolchain, and checkpointing.
+The image is made by booting stock Alpine, installing the toolchain, and
+checkpointing — for the reasons in the revision 3.1 correction above, not
+because `gondolin build` is unavailable.
+
+**Decide this before writing `provision.ts`.** The plan assumes the `pi` binary
+runs *inside* the guest. Upstream ships `host/examples/pi-gondolin.ts`, which
+does the opposite: Pi runs on the host, and only its
+`read`/`write`/`edit`/`bash` tools execute in the VM with the launch directory
+mounted at `/workspace`. That variant deletes most of this stage — but it moves
+Pi itself outside the sandbox, which is the thing this migration exists to
+prevent. **Recommendation: stay with in-guest Pi**, because the redesign's whole
+premise is that the agent runtime must not sit on the trusted side. Record the
+choice here rather than arriving at it by inertia, because it determines whether
+this stage exists at all.
 
 **Agent writes:** `runtime/image/provision.ts` and the `runtime-image` target.
 
-Toolchain, pinned exactly as `pi/spec.yaml` pins today: `apk add tree`;
+Toolchain: `apk add tree`;
 `npm i -g @earendil-works/pi-coding-agent@0.85.1 @thisismydesign/okf-lint@0.1.0`;
 `uv tool install` the four CLIs with `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR` under
 `/usr/local`; `pi install npm:@upstash/context7-pi@0.1.2`.
+
+**The cut list, stated rather than implied.** `pi/spec.yaml` installs more than
+this, and silently dropping tools would read as an accident later:
+
+| | Tools | Rationale |
+| --- | --- | --- |
+| **Already in the image** | `bash`, `curl`, `ca-certificates`, `nodejs`, `npm`, `uv`, `python3`, `openssh` | `images/alpine-base.json`. Do not reinstall. |
+| **Installed here** | `tree`, `pi`, `okf-lint`, `inspectmd`, `inspectokf`, `sizeokf`, `merkleokf`, Context7 | `tree` is a hard dependency of `inspectokf`; `okf-lint` is the only external tool the `compile-okf` skill actually shells out to (`skills/compile-okf/scripts/lint-okf.sh`). |
+| **Dropped** | `jq`, `ripgrep`, `shellcheck`, `markdownlint-cli2`, `cspell`, `ruff`, `yamllint` | No skill references any of them. They lint *this repo*, which the agent can no longer see — that work is host-side `make lint`. |
+| **Dropped, and load-bearing** | `mq` | `REDESIGN-gondolin-permissions.md` §9 (lines 507-517) flags it as a concrete blocker: it ships only glibc targets (`*-unknown-linux-gnu`) and Alpine is musl, so keeping it would force a Debian OCI base. No skill uses it. **Dropping `mq` is what makes the stock Alpine image viable** — a deliberate product decision, not an omission. |
+
+Stage 5's docs work must reflect this: the guest `AGENTS.md` "Installed tools"
+list shrinks to the middle row, and the `mqlang.org` allowlist entry disappears
+with it.
 
 **The provisioning mount set is not the run mount set** — this is easy to get
 wrong. Provisioning mounts `scripts/` read-only so `uv tool install` can reach
@@ -298,6 +381,12 @@ The security gate. Five mounts, all built-in providers.
 | `/sessions` | `RealFSProvider(logs/sessions/)` |
 | `/config` | `ReadonlyProvider(RealFSProvider(pi/files/home/.pi/agent/))` |
 
+`workspace.ts` builds the `/workspace` root by writing `SPEC.md`'s bytes from
+the host into a fresh `MemoryProvider`, *then* wrapping it in
+`ReadonlyProvider`. The nested `md` and `okf` mounts appear inside it as virtual
+directories via the mount router's longest-prefix matching, which is what makes
+row 11's `ls /workspace` come out as `SPEC.md  md  okf`.
+
 Plus `vfs.hooks.before` from Stage 2. The driver runs
 `cp -r /config/. /root/.pi/agent/` before starting Pi: `/root` is tmpfs on a
 throwaway rootfs, so the copy is writable — which is what lets `pi install`
@@ -321,6 +410,21 @@ the hook or the read-only mounts:
 11. `ls /workspace` is exactly `SPEC.md  md  okf`; `pi/`, `scripts/`, `.git/`
     unreachable
 12. Pi's own `write`/`edit` tools against rows 1-3 → same errors
+
+Two notes on the matrix, so nobody later "fixes" a non-bug or assumes a gap:
+
+- **Row 10 passes for a reason that is not the guard.** There is no `setattr` or
+  `chmod` operation in the VFS RPC surface at all — the dispatch table is
+  lookup/getattr/readlink/readdir/open/read/write/create/mkdir/symlink/unlink/
+  rmdir/rename/link/access/truncate/fallocate/copy_file_range/release/statfs
+  (`host/src/vfs/rpc-service.ts:160-203`) — and the guest only forwards a
+  `SETATTR` when the `SIZE` bit is set, i.e. a truncate
+  (`guest/src/sandboxfs/main.zig:471`). Mode bits never leave the guest. The
+  host file's permissions are therefore untouched by construction.
+- **`create` is a distinct RPC op but needs no separate guard case.**
+  `handleCreate` resolves to `this.provider.open(entryPath, …)`
+  (`rpc-service.ts:373`), so it passes through the hooked `open` that Stage 2
+  already covers.
 
 The suite runs against a **scratch copy** of the repo in a temp dir, never the
 real tree; it creates that copy itself so the host command stays one line.
@@ -361,7 +465,16 @@ no dual-runtime stage.
 - `runtime/src/net.ts` — `createHttpHooks({ allowedHosts: ["openrouter.ai",
   "registry.npmjs.org", "context7.com"], secrets: { OPENROUTER_API_KEY: {
   hosts: ["openrouter.ai"], value: process.env.OPENROUTER_API_KEY } } })`,
-  `allowWebSockets: false`. The key never enters the VM.
+  `allowWebSockets: false`. The key never enters the VM. `allowedHosts` is
+  written as a literal array here for the reason given above — omitting it means
+  allow-all — and one unit test in Stage 2 asserts the resolved list is exactly
+  those hosts. **Confirm `pi.dev` before cutting it:** today's kit allowlists it
+  for "Pi service bootstrap", and if Pi 0.85.1 contacts it at startup the run
+  fails closed with an opaque error. Stage 3's first in-guest `pi` invocation is
+  where that shows up — watch for it there and add the host if needed.
+  `registry.npmjs.org` stays only because `settings.json`'s `packages` list
+  re-ensures Context7 at startup; drop it if Stage 3 proves the baked-in install
+  is enough.
 - `runtime/src/shell.ts` — `make shell` (`vm.shell()`) and `make agent`
   (`vm.shell({ command: ["pi", …] })`), replacing `scripts/bash.sh` and
   `scripts/pi.sh`.
@@ -417,14 +530,19 @@ finally earns its place — and the point at which the `symlink` hook gap and th
 
 ## Out of scope
 
-**CI is excluded by decision** — this migration is local-only. One consequence
-must be stated rather than discovered: `.github/workflows/ci.yml` has a
-`validate-kit` job that installs the `sbx` CLI and runs `make validate` against
-`pi/spec.yaml`. Stage 5 deletes `pi/` and redefines `make validate` as a
-typecheck plus unit tests needing `runtime/node_modules`, which that job never
-installs. **The job will fail on every push once the branch merges.** Fixing it
-is a small, separate change — drop the sbx install steps, add a Node setup and
-`npm --prefix runtime ci` — deliberately left out here.
+**CI is excluded by decision** — this migration is local-only. Revision 3 stated
+the consequence wrongly, and the correction matters for sequencing:
+`.github/workflows/ci.yml` triggers on an unqualified `pull_request:`, so its
+`validate-kit` job — which installs the `sbx` CLI and runs `make validate`
+against `pi/spec.yaml` — runs on **every push to the PR**, not only after merge.
+
+Stage 2 therefore keeps `make validate` as a dispatcher that still runs
+`scripts/validate-spec.sh`, so the job stays green for the whole migration
+without CI entering scope. It goes red exactly once: when Stage 5 deletes `pi/`.
+At that point the fix is small and separate — drop the sbx install steps from
+the job, add a Node setup and `npm --prefix runtime ci` — and it lands with the
+merge rather than hanging over the branch. Everything else about the workflow is
+deliberately untouched.
 
 ## Files
 

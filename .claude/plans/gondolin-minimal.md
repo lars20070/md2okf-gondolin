@@ -312,9 +312,10 @@ point is the understanding, not a green tick.
 
 ## Appendix — findings to fold into the migration plan
 
-Reading the docs and the Gondolin repo for this exercise turned up four things
-that change `.claude/plans/gondolin-migration-macos.md`. Recorded here so they
-survive; not acted on now.
+Reading the docs and the Gondolin repo for this exercise turned up five things
+that change `.claude/plans/gondolin-migration-macos.md`. **All five are now
+folded into that plan's revision 3.1** — kept here as the record of where they
+came from.
 
 1. **Stage 3's toolchain shrinks.** `images/alpine-base.json` shows the stock
    image already installs `bash`, `ca-certificates`, `curl`, `e2fsprogs`,
