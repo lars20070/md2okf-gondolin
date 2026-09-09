@@ -1,6 +1,13 @@
 # macOS
 .DS_Store
 
+# Local scratch (Gondolin clone, learning exercises)
+.scratch/
+
+# Gondolin runtime host dependencies and generated assets
+runtime/node_modules/
+runtime/.cache/
+
 # Agents
 .claude/settings.local.json
 

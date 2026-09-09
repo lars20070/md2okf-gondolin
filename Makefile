@@ -1,13 +1,13 @@
 # md2okf-gondolin — developer task runner.
 #
-# Pi runs in one runtime: the Docker Sandbox (sbx) kit under pi/, which owns the
-# only copy of the agent config (see AGENTS.md).
+# Pi runs in a Gondolin micro-VM driven by the TypeScript project under
+# runtime/, which also owns the agent config (see AGENTS.md).
 #
 # Tool overrides (defaults suit local dev; CI overrides only MARKDOWNLINT):
 #   MARKDOWNLINT  markdownlint-cli2 launcher. Local: the brew-installed command.
 #                 CI: `npx --yes markdownlint-cli2` (no global install needed).
 #   RUFF          ruff launcher. Ephemeral and pinned, so it belongs to no
-#                 project; the pin matches the sandbox (pi/spec.yaml).
+#                 project.
 #   PYTEST        pytest launcher. Default: web2md. Prefer the per-project
 #                 targets (`test-web2md`, `test-clis`) which pass `-c`.
 #   YAMLLINT      yamllint launcher. Repo-wide (YAML lives outside the Python
@@ -21,7 +21,15 @@ CSPELL ?= npx --yes cspell
 
 .DEFAULT_GOAL := lint
 .PHONY: lint lint-okf validate test test-web2md test-clis install-clis \
-	test-sandbox wiki scrape
+	install-runtime test-sandbox test-bypass runtime-image wiki shell agent \
+	scrape require-host
+
+# VM targets need HVF and therefore the macOS host.
+require-host:
+	@if [ "$$(uname -s)" != Darwin ]; then \
+		echo "This target needs the macOS host (Gondolin needs HVF). Run it there." >&2; \
+		exit 1; \
+	fi
 
 # Lint tracked Markdown, JSON, YAML, and shell, spell-check owned Markdown, lint
 # Python, and check that VERSION and CHANGELOG.md's latest release agree.
@@ -75,13 +83,13 @@ lint:
 lint-okf:
 	pnpm dlx @thisismydesign/okf-lint ./okf
 
-# Validate the sandbox kit spec against the current Sandbox Kit schema.
+# Validate the host-side runtime without starting a VM.
 validate:
-	./scripts/validate-spec.sh
+	node runtime/node_modules/typescript/bin/tsc --noEmit -p runtime/tsconfig.json
+	node --test runtime/test/guard.test.ts runtime/test/net.test.ts
 
-# Host pytest suites plus the sandbox check. Host-only for the sandbox half
-# (needs `sbx login`). CI runs each pytest job on its own and does not invoke
-# this target.
+# Host pytest suites plus the VM toolchain check. The VM half needs macOS HVF;
+# CI runs each portable job on its own and does not invoke this target.
 test: test-web2md test-clis test-sandbox
 
 # Unit-test the web2md scraper (web2md/tests/). Offline: HTTP is mocked with
@@ -111,14 +119,29 @@ install-clis:
 	uv tool install --force ./scripts/sizeokf
 	uv tool install --force ./scripts/merkleokf
 
-# Check that the sandbox delivers the toolchain, agent config and proxy-managed
-# key that pi/spec.yaml promises.
-test-sandbox:
-	./tests/test-sandbox.sh
+# Install the pinned host-side Gondolin runtime dependencies.
+install-runtime:
+	npm --prefix runtime ci
 
-# Compile the OKF wiki with the sandboxed Pi runtime (Docker Sandbox / sbx).
-wiki:
-	./scripts/compile-okf.sh
+# Build and verify the provisioned Gondolin checkpoint on the macOS host.
+runtime-image: require-host
+	node runtime/image/provision.ts
+
+test-sandbox: require-host
+	node --test runtime/test/toolchain.test.ts
+
+test-bypass: require-host
+	node --test runtime/test/bypass.test.ts
+
+# Compile the OKF wiki with Pi in a fresh Gondolin VM per source document.
+wiki: require-host
+	node runtime/src/compile-okf.ts
+
+shell: require-host
+	node runtime/src/shell.ts shell
+
+agent: require-host
+	node runtime/src/shell.ts agent
 
 # Fetch the website into md/ as one file.
 scrape:

@@ -51,9 +51,13 @@ these instructions.
 
 ## Workspace boundaries
 
-- `md/` is **read-only** source material. Never modify anything under `md/`.
+The runtime enforces these boundaries through separate filesystem mounts:
+
+- `md/` is **read-only** source material.
 - `SPEC.md` at the workspace root is **read-only** reference material.
-- `okf/` is your **only** writable output. Create and update wiki pages there.
+- `okf/` is your **only** writable output. Create and update wiki pages there;
+  its tracked `.okflintrc.json` remains read-only.
+- Other repository files are not mounted and are invisible to the guest.
 
 ## OKF wiki conventions
 
