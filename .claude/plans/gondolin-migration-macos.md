@@ -20,6 +20,11 @@
 > review: `SPEC.md` seeding, the row-10 mechanism, and `pi.dev`. Note the review
 > was written against revision 3 and so endorses the `gondolin build` chroot
 > claim that 3.1 had already disproved — that endorsement is not acted on.
+>
+> **Revision 3.3** records a host-shell footgun found while running
+> `gondolin-minimal.md` on the Mac: zsh does not word-split unquoted expansions,
+> so multi-word command shorthands must use arrays (`G=(…)`, `"${G[@]}"`), not
+> strings. No stage design change.
 
 ## Context
 
@@ -66,6 +71,20 @@ mkdir -p logs/gondolin
 Then say "done" — the agent reads the log directly. No copy-paste, no
 truncation. The `!` prefix in the Claude session runs *inside* the sandbox and
 must never be used for these commands.
+
+**Host shell is zsh.** macOS defaults to zsh, and zsh does **not** word-split
+unquoted parameter expansions (bash does). A shorthand like
+`G="npx --yes @earendil-works/gondolin@0.12.0"` then `$G exec …` fails with
+`zsh: no such file or directory: npx --yes …` — the whole string is one command
+name. Hit during the `gondolin-minimal` exercise (Step 3). Rules for every
+copy-pasteable host block in this plan:
+
+- Prefer spelling the full command (`npx …`, `npm …`, `make …`) — no wrapper
+  variable.
+- If a multi-word shorthand is worth it, use an array:
+  `G=(npx --yes @earendil-works/gondolin@0.12.0)` and `"${G[@]}" …`
+  (also valid in bash).
+- Never stash a multi-word command in a string variable and expand it with `$G`.
 
 **Two node_modules trees cannot coexist at one path**, so `runtime/node_modules`
 is installed by the host and belongs to macOS. The agent may run `tsc --noEmit`
@@ -139,6 +158,11 @@ sees the real path.
   deny-by-default" is true of the filesystem and **false of the network**. In
   `runtime/src/net.ts` the list must be an explicit non-empty literal, never a
   variable that could arrive `undefined`.
+- **Host shell is zsh (revision 3.3).** Unquoted `$VAR` does not word-split; a
+  string shorthand for `npx --yes …` then `$G exec` fails with
+  `zsh: no such file or directory`. Prefer full commands in host blocks; if a
+  shorthand is needed, use `G=(…)` and `"${G[@]}"`. See "The collaboration
+  model" above.
 - **The `uv` trap.** `/init` exports `XDG_DATA_HOME=/tmp/.local/share` and
   `UV_CACHE_DIR=/tmp/.cache/uv` (`guest/image/init:55-56`), both tmpfs, so
   `uv tool install` must set `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` under `/usr/local`

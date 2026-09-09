@@ -158,22 +158,30 @@ you mount it. The CLI's *network is the opposite*. Verified in source:
 
 So a secret handed to a guest **without** an allowlist is a secret in a guest
 with open egress. `--allow-host` is required alongside `--host-secret`, not
-redundant with it. Four commands, in this order:
+redundant with it. Four commands, in this order.
+
+**zsh footgun (hit during this exercise):** macOS default shell is zsh, and zsh
+does **not** word-split unquoted expansions. `G="npx --yes …"` then `$G exec …`
+looks for a binary literally named `npx --yes @earendil-works/gondolin@0.12.0`
+and fails with `zsh: no such file or directory`. Stash a multi-word command in
+an **array** and expand with `"${G[@]}"` (works in bash too). Do not use a
+string variable for this shorthand.
 
 ```bash
-G="npx --yes @earendil-works/gondolin@0.12.0"
+# zsh-safe (and bash-safe): array, not a string
+G=(npx --yes @earendil-works/gondolin@0.12.0)
 CURL='curl -sS -m 15 -o /dev/null -w "%{http_code}\n" https://example.com/'
 
 # 1. No flags at all: egress is OPEN. Expect 200.
-$G exec --image alpine-base:0.2.0 -- /bin/sh -lc "$CURL" \
+"${G[@]}" exec --image alpine-base:0.2.0 -- /bin/sh -lc "$CURL" \
   2>&1 | tee logs/step3a-default-open.log
 
 # 2. An allowlist that does not name example.com: now it is blocked. Expect 403.
-$G exec --image alpine-base:0.2.0 --allow-host other.example \
+"${G[@]}" exec --image alpine-base:0.2.0 --allow-host other.example \
   -- /bin/sh -lc "$CURL" 2>&1 | tee logs/step3b-blocked.log
 
 # 3. The right host allowlisted. Expect 200.
-$G exec --image alpine-base:0.2.0 --allow-host example.com \
+"${G[@]}" exec --image alpine-base:0.2.0 --allow-host example.com \
   -- /bin/sh -lc "$CURL" 2>&1 | tee logs/step3c-allowed.log
 ```
 
@@ -187,7 +195,7 @@ work. Your real token stays on the host; the guest gets a placeholder:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-$G exec --image alpine-base:0.2.0 \
+"${G[@]}" exec --image alpine-base:0.2.0 \
   --allow-host api.github.com \
   --host-secret GITHUB_TOKEN@api.github.com \
   -- /bin/sh -lc '
@@ -313,9 +321,10 @@ point is the understanding, not a green tick.
 ## Appendix — findings to fold into the migration plan
 
 Reading the docs and the Gondolin repo for this exercise turned up five things
-that change `.claude/plans/gondolin-migration-macos.md`. **All five are now
-folded into that plan's revision 3.1** — kept here as the record of where they
-came from.
+that change `.claude/plans/gondolin-migration-macos.md`. **Those five are in
+that plan's revision 3.1.** A sixth finding — zsh does not word-split unquoted
+expansions — came from running Step 3 on the Mac and is folded into revision
+3.3. Kept here as the record of where they came from.
 
 1. **Stage 3's toolchain shrinks.** `images/alpine-base.json` shows the stock
    image already installs `bash`, `ca-certificates`, `curl`, `e2fsprogs`,
@@ -352,3 +361,10 @@ came from.
    next to the guard tests. The same asymmetry is worth one sentence in the
    migration plan's prose, because "Gondolin is deny-by-default" is true of the
    filesystem and false of the network.
+6. **Host shell is zsh; multi-word command shorthands must be arrays.** During
+   Step 3, `G="npx --yes @earendil-works/gondolin@0.12.0"` then `$G exec …`
+   failed with `zsh: no such file or directory: npx --yes …` because zsh does
+   not word-split unquoted expansions (unlike bash). Prefer writing the full
+   `npx …` line, or use `G=(npx --yes …)` and `"${G[@]}"`. Fold into the
+   migration plan's host collaboration notes so copy-pasteable blocks stay
+   zsh-safe.
