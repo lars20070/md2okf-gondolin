@@ -143,7 +143,7 @@ running `make`.
 1. Move `[Unreleased]` entries into a dated `## [X.Y.Z] - YYYY-MM-DD` section
    with a real body (not just a heading).
 2. Set `VERSION` to `X.Y.Z`.
-3. Land that commit on `master`. `make lint` fails if `VERSION` and the latest
+3. Land that commit on `main`. `make lint` fails if `VERSION` and the latest
    changelog release heading disagree.
 4. Sanity-check the notes: `./scripts/release-notes.sh X.Y.Z`
 5. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`

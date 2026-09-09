@@ -16,6 +16,13 @@ and this project adheres to
   kit keeps its shorter name `md2okf` (`pi/spec.yaml`), so existing
   `sbx secret` bindings continue to work.
 
+### Fixed
+
+- CI now runs on pushes to `main`. `.github/workflows/ci.yml` triggered on
+  `master`, a branch this repository does not have, so the push-triggered
+  half of CI never ran and the README badge stayed grey. The release step in
+  `CONTRIBUTING.md` named the same non-existent branch.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added
