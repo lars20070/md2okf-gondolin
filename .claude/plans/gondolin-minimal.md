@@ -23,15 +23,21 @@ than lost.
 ```
 md2okf-gondolin/
   .gitignore              <- one new line: .scratch/
-  .scratch/gondolin-hello/    <- everything below is disposable
-    package.json
-    hello.ts
-    work/                 (mounted read-write into the guest)
-    reference/notes.md    (mounted read-only)
-    logs/step*.log        (you tee here; I read)
+  .scratch/
+    gondolin/             <- your upstream clone, already here and untracked
+    gondolin-hello/       <- everything below is disposable
+      package.json
+      hello.ts
+      work/               (mounted read-write into the guest)
+      reference/notes.md  (mounted read-only)
+      logs/step*.log      (you tee here; I read)
 ```
 
-`.scratch/` is a new gitignored directory, so nothing here can reach a commit.
+`.scratch/` already exists — it holds your clone of the Gondolin repo — but
+nothing ignores it yet, so `git status` currently shows `?? .scratch/`. The one
+`.gitignore` line covers both the clone and this exercise, and is worth adding
+whatever you decide about the rest of this plan.
+
 Every command below ends in a `tee` into `.scratch/gondolin-hello/logs/`. The
 repo is mounted into my sandbox in direct mode, so I read those logs directly —
 say "done" and I pick them up. **Do not use the `!` prefix in the Claude
@@ -44,8 +50,12 @@ runbook as this plan, so you can follow it without scrolling here.
 
 ## Step 0 — Prerequisites · **HOST**
 
+Run this **after** I have written the files listed above — `cd` into a folder
+that does not exist yet is the easiest way to start this on the wrong foot.
+
 ```bash
-cd /Users/lars/Code/md2okf-gondolin/.scratch/gondolin-hello
+cd /Users/lars/Code/md2okf-gondolin/.scratch/gondolin-hello || \
+  { echo "not created yet — ask Claude to write the exercise files first"; }
 brew install qemu node
 mkdir -p logs work
 { sw_vers; uname -m; node --version; qemu-system-aarch64 --version | head -1; } \
@@ -76,7 +86,9 @@ npx --yes @earendil-works/gondolin@0.12.0 exec --image alpine-base:0.2.0 \
 The first run downloads ~200 MB of guest assets into `~/.cache/gondolin/`;
 run it a second time to see the real boot cost.
 
-Then poke around interactively — `exit` to leave, `Ctrl-]` to detach:
+Optional, and for your benefit rather than the log — an interactive shell to
+poke around in. `exit` leaves, `Ctrl-]` detaches. Nothing here is
+log-verifiable, so skip it if you would rather keep the trail clean:
 
 ```bash
 npx --yes @earendil-works/gondolin@0.12.0 bash --image alpine-base:0.2.0
@@ -128,53 +140,82 @@ Re-run the first command and look for `/scratch/tmp.txt`: it is gone.
   directory you did not mount does not exist for the guest — not "is denied",
   *does not exist*. That is the property `sbx` cannot offer at all.
 
-## Step 3 — Network allowlist and secret injection · **HOST**
+## Step 3 — Network: open by default, then narrowed · **HOST**
+
+**Read this before running — it is the one place where the filesystem intuition
+from Step 2 misleads you.** The VFS is deny-by-default: nothing exists unless
+you mount it. The CLI's *network is the opposite*. Verified in source:
+
+- With neither `--allow-host` nor `--host-secret`, the CLI installs no HTTP
+  hooks at all (`host/bin/gondolin.ts:966`), and the bridge waves the request
+  through when there is no `isIpAllowed` (`host/src/http/utils.ts:545-548`).
+- With **only** `--host-secret`, the CLI passes `allowedHosts: undefined`
+  (`gondolin.ts:973-974`), which `createHttpHooks` turns into `["*"]`
+  (`host/src/http/hooks.ts:161-164`). The option's own doc comment says it
+  plainly: *"omitted = allow all, explicit empty = deny all"* (`hooks.ts:52`).
+  Upstream even has a test named *"keeps implicit open egress for host secrets
+  without --allow-host"* (`host/test/cli-http-hooks-options.test.ts:22`).
+
+So a secret handed to a guest **without** an allowlist is a secret in a guest
+with open egress. `--allow-host` is required alongside `--host-secret`, not
+redundant with it. Four commands, in this order:
 
 ```bash
-# a. No allowlist: egress is not permitted.
-npx --yes @earendil-works/gondolin@0.12.0 exec --image alpine-base:0.2.0 \
-  -- /bin/sh -lc 'curl -sS -m 15 -o /dev/null -w "%{http_code}\n" https://example.com/' \
-  2>&1 | tee logs/step3a-blocked.log
+G="npx --yes @earendil-works/gondolin@0.12.0"
+CURL='curl -sS -m 15 -o /dev/null -w "%{http_code}\n" https://example.com/'
 
-# b. Allowlisted: the same request succeeds.
-npx --yes @earendil-works/gondolin@0.12.0 exec --image alpine-base:0.2.0 \
-  --allow-host example.com \
-  -- /bin/sh -lc 'curl -sSI -m 15 https://example.com/ | head -1' \
-  2>&1 | tee logs/step3b-allowed.log
+# 1. No flags at all: egress is OPEN. Expect 200.
+$G exec --image alpine-base:0.2.0 -- /bin/sh -lc "$CURL" \
+  2>&1 | tee logs/step3a-default-open.log
+
+# 2. An allowlist that does not name example.com: now it is blocked. Expect 403.
+$G exec --image alpine-base:0.2.0 --allow-host other.example \
+  -- /bin/sh -lc "$CURL" 2>&1 | tee logs/step3b-blocked.log
+
+# 3. The right host allowlisted. Expect 200.
+$G exec --image alpine-base:0.2.0 --allow-host example.com \
+  -- /bin/sh -lc "$CURL" 2>&1 | tee logs/step3c-allowed.log
 ```
 
-Now the interesting one. Your real token stays on the host; the guest gets a
-placeholder that only works against `api.github.com`:
+A refusal is an HTTP **403** carrying `blocked by policy: example.com`
+(`HttpRequestBlockedError`, `host/src/http/utils.ts:23` and `:366`) — the host
+answers the request rather than dropping the connection, so `curl` reports a
+status code, not a timeout.
+
+Now secret injection, with the allowlist that step 2 just proved is doing the
+work. Your real token stays on the host; the guest gets a placeholder:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-npx --yes @earendil-works/gondolin@0.12.0 exec --image alpine-base:0.2.0 \
+$G exec --image alpine-base:0.2.0 \
   --allow-host api.github.com \
   --host-secret GITHUB_TOKEN@api.github.com \
   -- /bin/sh -lc '
       echo "the guest sees: $GITHUB_TOKEN"
       curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
         https://api.github.com/user | head -c 200; echo
-  ' 2>&1 | tee logs/step3c-secret.log
+  ' 2>&1 | tee logs/step3d-secret.log
 ```
 
 **What to notice**
 
+- Commands 1-3 are the lesson: the allowlist is what creates the boundary.
+  Omitting it does not fail closed.
 - The echoed value is a **placeholder**, not your token — yet the API call
   comes back authenticated as you. The host substituted the real value into the
   `Authorization` header on its way out, for that host only.
 - Your token therefore never enters the VM and cannot be in the log. The log
   *does* contain your public GitHub profile JSON; trim it if you mind.
 - This is precisely what replaces the `sbx secret` two-step for
-  `OPENROUTER_API_KEY` in the migration.
+  `OPENROUTER_API_KEY` in the migration — with the caveat that the migration's
+  `createHttpHooks({ allowedHosts: [...] })` must always pass an explicit,
+  non-empty array.
 
-Two things the docs warn about, worth knowing now: always write
-`--host-secret NAME@HOST`, because the bare `--host-secret NAME` form pulls a
-managed `trufflehog` helper and asks you to confirm hostnames interactively;
-and Gondolin mediates HTTP/1.1 only — no HTTP/2, HTTP/3, QUIC or plain UDP —
-so a tool that insists on those will fail here for reasons that have nothing to
-do with your policy. (`--allow-host` alongside `--host-secret` may be redundant,
-since the secret names its own host; it is included as belt and braces.)
+Two more warnings from the docs: always write `--host-secret NAME@HOST`, because
+the bare `--host-secret NAME` form pulls a managed `trufflehog` helper and asks
+you to confirm hostnames interactively; and Gondolin mediates HTTP/1.1 only — no
+HTTP/2, HTTP/3, QUIC or plain UDP — so a tool that insists on those fails here
+for reasons that have nothing to do with your policy.
 
 ## Step 4 — The same policy in ~50 lines of host JavaScript · **HOST** runs, **AGENT** writes
 
@@ -185,7 +226,34 @@ leverage is: the policy is a JavaScript object you own.
 read-write `RealFSProvider`, a `ReadonlyProvider` wrapping another, a
 `MemoryProvider`, and `createHttpHooks` with one allowed host — and adds the
 one thing the CLI cannot do: a `vfs.hooks.before` callback that sees **every**
-filesystem operation the guest attempts, and prints them at the end.
+filesystem operation the guest attempts.
+
+What I will write, so there is no ambiguity about what it must produce:
+
+```ts
+const seen: Array<{ op: string; path: string }> = [];
+
+const vm = await VM.create({
+  sandbox: { imagePath: "alpine-base:0.2.0" },
+  ...createHttpHooks({ allowedHosts: ["example.com"] }),   // explicit, non-empty
+  vfs: {
+    mounts: {
+      "/workspace": new RealFSProvider(workDir),
+      "/reference": new ReadonlyProvider(new RealFSProvider(refDir)),
+      "/scratch":   new MemoryProvider(),
+    },
+    hooks: { before: (ctx) => { seen.push({ op: ctx.op, path: ctx.path }); } },
+  },
+});
+```
+
+Then four `vm.exec` calls whose outcomes the log must show, in order:
+
+1. write `/workspace/from-sdk.txt` → succeeds, and survives on the host
+2. write `/reference/notes.md` → **refused** by `ReadonlyProvider` (this is the
+   refused write the Verification table asks for)
+3. `curl https://example.com/` → 200; `curl https://api.github.com/` → 403
+4. print `seen` — the audit trail — then `await vm.close()`
 
 ```bash
 npm install 2>&1 | tee logs/step4-install.log
@@ -218,12 +286,14 @@ reuse them. `rm -rf ~/.cache/gondolin` if you would rather start clean.
 1. Why does guest `root` not matter?
 2. What is the difference between a path that is denied and a path that does
    not exist, and which one does Gondolin give you?
-3. Where does the OpenRouter key live during a run, and what does the agent see
+3. Which of the two boundaries — filesystem, network — fails closed when you
+   forget to configure it, and which fails open?
+4. Where does the OpenRouter key live during a run, and what does the agent see
    in its place?
-4. If you had to freeze one file inside an otherwise writable directory, where
+5. If you had to freeze one file inside an otherwise writable directory, where
    would the code go?
 
-Those four are the migration in miniature.
+Those five are the migration in miniature.
 
 ## Verification
 
@@ -232,8 +302,8 @@ Those four are the migration in miniature.
 | 0 | `node` ≥ 23.6.0, QEMU present, arm64 confirmed. |
 | 1 | A guest `uname -a` in the log, and a second boot that takes about a second. |
 | 2 | `work/from-guest.txt` exists on the host, `reference/notes.md` is unchanged, `/scratch/tmp.txt` is gone on re-run, and `ls /` shows no host tree. |
-| 3 | `example.com` blocked without the flag and `200`/`HTTP/1.1 200` with it; the guest echoes a placeholder while GitHub answers with your profile. |
-| 4 | `hello.ts` prints the VFS audit trail and one refused write. |
+| 3 | `200` with no flags at all, `403` under a mismatched allowlist, `200` under the right one — and the guest echoes a placeholder while GitHub answers with your profile. |
+| 4 | `hello.ts` prints the VFS audit trail, the refused write to `/reference`, and 200/403 for the two hosts. |
 
 I read each log as it lands and confirm the reading matches the intent — the
 point is the understanding, not a green tick.
@@ -271,3 +341,13 @@ survive; not acted on now.
    should pin `^5.9.0` (resolving to 5.9.3) so a compiler rewrite is not
    adopted mid-migration, and `@types/node` `^26.0.0`. `@earendil-works/gondolin@0.12.0`
    is current `latest` on the registry with `engines: >=23.6.0`.
+5. **`allowedHosts` fails *open*, and that is a migration-grade footgun.**
+   `createHttpHooks` treats an omitted `allowedHosts` as `["*"]` and only an
+   explicit `[]` as deny-all (`host/src/http/hooks.ts:52`, `:161-164`). So in
+   `runtime/src/net.ts` the list must always be an explicit, non-empty literal —
+   never built from a variable that could arrive `undefined`, and never spread
+   from an optional config field. A Stage 2 unit test asserting the resolved
+   allowlist is exactly the three intended hosts is cheap insurance, and belongs
+   next to the guard tests. The same asymmetry is worth one sentence in the
+   migration plan's prose, because "Gondolin is deny-by-default" is true of the
+   filesystem and false of the network.
